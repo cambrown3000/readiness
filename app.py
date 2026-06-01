@@ -34,6 +34,7 @@ except Exception:
 
 st.set_page_config(
     page_title="Readiness",
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
     menu_items={"About": "Personal health dashboard combining Garmin + nutrition data."},
@@ -129,17 +130,46 @@ if "user" not in st.session_state:
         <div style="
             display: flex; flex-direction: column;
             align-items: center; justify-content: center;
-            height: 55vh; gap: 0.5rem;
+            min-height: 70vh; gap: 0;
+            text-align: center;
+            padding: 4rem 1rem 2rem;
         ">
-            <h1 style="font-size: 2.5rem; margin: 0;">Readiness</h1>
-            <p style="color: #6b7280; margin: 0 0 1.5rem 0; font-size: 1rem;">
-                Personal health dashboard
+            <div style="font-size: 3.5rem; margin-bottom: 0.75rem; line-height: 1;">📊</div>
+            <h1 style="
+                font-size: 3rem; font-weight: 700;
+                margin: 0 0 0.5rem 0; letter-spacing: -0.5px;
+            ">Readiness</h1>
+            <p style="
+                color: #9ca3af; font-size: 1.1rem;
+                margin: 0 0 1.5rem 0; font-weight: 400;
+            ">Your personal health intelligence dashboard</p>
+            <div style="
+                width: 40px; height: 2px;
+                background: #374151; margin: 0 auto 1.5rem;
+            "></div>
+            <p style="
+                color: #6b7280; font-size: 0.9rem;
+                max-width: 400px; line-height: 1.65; margin: 0 0 2.5rem 0;
+            ">
+                Combines Garmin training data and nutrition to surface patterns
+                about your health that no single app can show you.
             </p>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    st.link_button("Sign in with Google", auth.get_authorization_url())
+    _c1, _c2, _c3 = st.columns([1, 1, 1])
+    with _c2:
+        st.link_button("Sign in with Google", auth.get_authorization_url(), use_container_width=True)
+    st.markdown(
+        """
+        <p style="
+            text-align: center; color: #4b5563;
+            font-size: 0.78rem; margin-top: 1.5rem;
+        ">Your data stays yours — secured with Google OAuth</p>
+        """,
+        unsafe_allow_html=True,
+    )
     st.stop()
 
 # Authenticated — pull user from session for the rest of the page
