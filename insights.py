@@ -1,13 +1,6 @@
-# insights.py — AI insights engine powered by the Anthropic Claude API.
-# Queries the SQLite database for recent Garmin and nutrition data, constructs
-# a structured prompt, and calls Claude to surface cross-variable patterns
-# (e.g., sleep quality vs. protein intake, HRV vs. carb timing). Returns
-# formatted insight text for display in the Streamlit dashboard.
-
-import html
 import json
 import os
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import anthropic
@@ -15,9 +8,22 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-CACHE_PATH = Path(__file__).parent / "data" / "insights_cache.json"
-MODEL = "claude-sonnet-4-6"
+MODEL      = "claude-sonnet-4-6"
 MAX_TOKENS = 1024
+
+CACHE_PATH       = Path(__file__).parent / "data" / "insights_cache.json"
+TODAY_CACHE_PATH = Path(__file__).parent / "data" / "today_cache.json"
+
+
+def _patterns_cache_path(days: int) -> Path:
+    return Path(__file__).parent / "data" / f"patterns_cache_{days}.json"
+
+
+def _make_client() -> anthropic.Anthropic:
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise ValueError("ANTHROPIC_API_KEY is not set")
+    return anthropic.Anthropic(api_key=api_key)
 
 
 # ---------------------------------------------------------------------------
@@ -29,20 +35,17 @@ def _fmt(value, spec=".0f") -> str:
 
 
 def _build_data_summary(summary: list[dict], activities: list[dict]) -> str:
-    """Render the 30-day dataset as a readable plain-text block for Claude."""
-
-    # Aggregate stats
-    rhr_vals    = [r["resting_hr"]          for r in summary if r.get("resting_hr")]
-    score_vals  = [r["sleep_score"]         for r in summary if r.get("sleep_score")]
-    dur_vals    = [r["total_sleep_seconds"] / 3600 for r in summary if r.get("total_sleep_seconds")]
-    total_km    = sum((a.get("distance_meters") or 0) / 1000 for a in activities)
-    weeks       = max(len(summary) / 7, 1)
-    nutr_days   = sum(1 for r in summary if r.get("nutrition_calories"))
+    rhr_vals   = [r["resting_hr"]          for r in summary if r.get("resting_hr")]
+    score_vals = [r["sleep_score"]         for r in summary if r.get("sleep_score")]
+    dur_vals   = [r["total_sleep_seconds"] / 3600 for r in summary if r.get("total_sleep_seconds")]
+    total_km   = sum((a.get("distance_meters") or 0) / 1000 for a in activities)
+    weeks      = max(len(summary) / 7, 1)
+    nutr_days  = sum(1 for r in summary if r.get("nutrition_calories"))
 
     def avg(vals):
         return sum(vals) / len(vals) if vals else None
 
-    lines = ["=== AGGREGATE STATS (last 30 days) ==="]
+    lines = [f"=== AGGREGATE STATS (last {len(summary)} days) ==="]
     lines.append(f"Average resting HR:       {_fmt(avg(rhr_vals))} bpm")
     lines.append(f"Average sleep score:      {_fmt(avg(score_vals))}")
     lines.append(f"Average sleep duration:   {_fmt(avg(dur_vals), '.1f')} hours")
@@ -50,22 +53,17 @@ def _build_data_summary(summary: list[dict], activities: list[dict]) -> str:
     lines.append(f"Avg weekly running km:    {_fmt(total_km / weeks, '.1f')}")
     lines.append(f"Nutrition data coverage:  {nutr_days} of {len(summary)} days")
     lines.append("")
-
-    # Daily table
     lines.append("=== DAILY DATA (newest first) ===")
     hdr = "Date       | RHR | Score | Sleep h | Deep h | Stress | Steps  | kcal | Pro | Carb | Fat | Last meal"
     lines.append(hdr)
     lines.append("-" * len(hdr))
 
-    for r in summary[:30]:
-        sleep_h = r["total_sleep_seconds"] / 3600 if r.get("total_sleep_seconds") else None
-        deep_h  = r["deep_sleep_seconds"]  / 3600 if r.get("deep_sleep_seconds")  else None
-
+    for r in summary:
+        sleep_h   = r["total_sleep_seconds"] / 3600 if r.get("total_sleep_seconds") else None
+        deep_h    = r["deep_sleep_seconds"]  / 3600 if r.get("deep_sleep_seconds")  else None
         last_meal = r.get("last_meal_time") or "—"
-        # Trim "YYYY-MM-DD HH:MM:SS" → "HH:MM"
         if last_meal != "—" and len(last_meal) >= 16:
             last_meal = last_meal[11:16]
-
         lines.append(
             f"{r['date']} | {_fmt(r.get('resting_hr')):3} | {_fmt(r.get('sleep_score')):5} | "
             f"{_fmt(sleep_h, '.1f'):7} | {_fmt(deep_h, '.1f'):6} | "
@@ -75,8 +73,6 @@ def _build_data_summary(summary: list[dict], activities: list[dict]) -> str:
         )
 
     lines.append("")
-
-    # Activity table
     lines.append("=== ACTIVITIES ===")
     if activities:
         lines.append("Date       | Type      | km    | min | Avg HR | Pace")
@@ -97,32 +93,182 @@ def _build_data_summary(summary: list[dict], activities: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _parse_json_response(text: str) -> dict:
+    text = text.strip()
+    if text.startswith("```"):
+        parts = text.split("```")
+        text = parts[1] if len(parts) >= 2 else text
+        if text.startswith("json"):
+            text = text[4:]
+    text = text.strip().rstrip("`").strip()
+    return json.loads(text)
+
+
+# ---------------------------------------------------------------------------
+# Today briefing
+# ---------------------------------------------------------------------------
+
+def generate_today_briefing(summary: list[dict], activities: list[dict]) -> dict:
+    if TODAY_CACHE_PATH.exists():
+        try:
+            cached = json.loads(TODAY_CACHE_PATH.read_text())
+            if cached.get("date") == date.today().isoformat():
+                return cached["data"]
+        except Exception:
+            pass
+    return refresh_today_briefing(summary, activities)
+
+
+def refresh_today_briefing(summary: list[dict], activities: list[dict]) -> dict:
+    data_block = _build_data_summary(summary[:7], activities[:10])
+    prompt = f"""You are a personal health coach. Analyze this health data and write a daily briefing.
+
+{data_block}
+
+Return a JSON object with exactly two keys:
+- "briefing": 150-200 words, second person, flowing prose (no bullet points, no markdown). Assess yesterday's recovery using sleep score, HRV, and resting HR. Give a clear training vs recovery recommendation for today based on the load pattern. If nutrition data exists, give one specific recommendation. End with one forward-looking sentence about what to watch today.
+- "suggested_questions": list of exactly 3 short follow-up questions relevant to today's data (under 12 words each).
+
+Return only valid JSON with no markdown code blocks."""
+
+    client = _make_client()
+    resp = client.messages.create(
+        model=MODEL,
+        max_tokens=600,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    try:
+        data = _parse_json_response(resp.content[0].text)
+        if "briefing" not in data:
+            raise ValueError("missing briefing key")
+    except Exception:
+        data = {"briefing": resp.content[0].text.strip(), "suggested_questions": []}
+
+    TODAY_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    TODAY_CACHE_PATH.write_text(json.dumps({"date": date.today().isoformat(), "data": data}))
+    return data
+
+
+# ---------------------------------------------------------------------------
+# Pattern analysis
+# ---------------------------------------------------------------------------
+
+def generate_pattern_analysis(summary: list[dict], activities: list[dict], days: int) -> dict:
+    cache_path = _patterns_cache_path(days)
+    if cache_path.exists():
+        try:
+            cached = json.loads(cache_path.read_text())
+            age_hours = (datetime.now().timestamp() - cached.get("ts", 0)) / 3600
+            if age_hours < 6:
+                return cached["data"]
+        except Exception:
+            pass
+    return refresh_pattern_analysis(summary, activities, days)
+
+
+def refresh_pattern_analysis(summary: list[dict], activities: list[dict], days: int) -> dict:
+    focus_map = {
+        7:   "acute patterns and this week's trends — what happened and why",
+        30:  "cross-variable correlations: how sleep, nutrition, stress, and training interact",
+        180: "6-month arc: seasonal trends, fitness trajectory, persistent patterns",
+        365: "12-month view: biggest improvements, persistent weaknesses, year-level lifestyle shifts",
+    }
+    focus = focus_map.get(days, "cross-variable health patterns")
+    data_block = _build_data_summary(summary, activities)
+
+    prompt = f"""You are analyzing {days} days of personal health data from a Garmin tracker and nutrition app.
+Focus: {focus}.
+
+{data_block}
+
+Rules: reference actual numbers, identify cross-variable relationships, flag anomalies.
+
+Return a JSON object with exactly two keys:
+- "analysis": 200-250 words with 3-5 numbered findings in format "1. Label: explanation." No markdown headers, no bullet points.
+- "suggested_questions": list of exactly 3 follow-up questions relevant to the patterns found (under 15 words each).
+
+Return only valid JSON, no markdown code blocks."""
+
+    client = _make_client()
+    resp = client.messages.create(
+        model=MODEL,
+        max_tokens=768,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    try:
+        data = _parse_json_response(resp.content[0].text)
+        if "analysis" not in data:
+            raise ValueError("missing analysis key")
+    except Exception:
+        data = {"analysis": resp.content[0].text.strip(), "suggested_questions": []}
+
+    cache_path = _patterns_cache_path(days)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(json.dumps({"ts": datetime.now().timestamp(), "data": data}))
+    return data
+
+
+# ---------------------------------------------------------------------------
+# Chat
+# ---------------------------------------------------------------------------
+
+def chat_with_data(
+    messages: list[dict],
+    new_message: str,
+    summary: list[dict],
+    activities: list[dict],
+    mode: str = "today",
+) -> str:
+    data_block = _build_data_summary(summary[:14], activities[:20])
+
+    if mode == "today":
+        system = (
+            "You are a personal health coach with access to the user's recent health data. "
+            "Be conversational, specific to their numbers, and actionable. Under 200 words.\n\n"
+            + data_block
+        )
+    else:
+        system = (
+            "You are a personal health analyst. Focus on long-term trends, training periodization, "
+            "and lifestyle patterns. Reference specific data points. Under 250 words.\n\n"
+            + data_block
+        )
+
+    api_messages = list(messages[-18:])
+    while api_messages and api_messages[0]["role"] != "user":
+        api_messages.pop(0)
+    api_messages.append({"role": "user", "content": new_message})
+
+    client = _make_client()
+    resp = client.messages.create(
+        model=MODEL,
+        max_tokens=512,
+        system=system,
+        messages=api_messages,
+    )
+    return resp.content[0].text
+
+
+# ---------------------------------------------------------------------------
+# Legacy cache helpers (kept for compatibility)
+# ---------------------------------------------------------------------------
+
 def _build_prompt(summary: list[dict], activities: list[dict]) -> str:
     data = _build_data_summary(summary, activities)
-    return f"""You are analyzing 30 days of personal health data from a Garmin fitness tracker and nutrition tracking. Find patterns that cross multiple variables — the kind of signal the user cannot see by looking at a single metric in isolation.
+    return f"""You are analyzing 30 days of personal health data from a Garmin fitness tracker and nutrition tracking. Find patterns that cross multiple variables.
 
 {data}
 
 Identify 3 to 5 specific, data-backed findings. Rules:
-- Reference actual numbers from the data — never give generic health advice
-- Focus on cross-variable relationships: e.g. how sleep quality the night before an activity affects pace or HR, whether last meal timing correlates with next-day resting HR, how stress averages track with step counts or recovery
-- If nutrition data covers fewer than 10 days, note that briefly and spend the rest of the analysis on Garmin variables
-- Flag any anomalies or values that stand out and are worth monitoring
-- Format as numbered findings: "1. Short Label: 2-3 sentences." — no markdown headers, no dashes, no bullet points
-- Total response must be under 400 words"""
+- Reference actual numbers — never give generic health advice
+- Focus on cross-variable relationships
+- If nutrition data covers fewer than 10 days, note that and focus on Garmin variables
+- Format as numbered findings: "1. Short Label: 2-3 sentences." — no markdown, no bullets
+- Total response under 400 words"""
 
-
-# ---------------------------------------------------------------------------
-# Core API call
-# ---------------------------------------------------------------------------
 
 def generate_insights(summary: list[dict], activities: list[dict]) -> str:
-    """Call Claude with 30 days of health data. Returns the plain-text response."""
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise ValueError("ANTHROPIC_API_KEY is not set in .env")
-
-    client = anthropic.Anthropic(api_key=api_key)
+    client = _make_client()
     message = client.messages.create(
         model=MODEL,
         max_tokens=MAX_TOKENS,
@@ -131,17 +277,12 @@ def generate_insights(summary: list[dict], activities: list[dict]) -> str:
     return message.content[0].text
 
 
-# ---------------------------------------------------------------------------
-# Cache helpers
-# ---------------------------------------------------------------------------
-
 def _save_cache(text: str) -> None:
     CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
     CACHE_PATH.write_text(json.dumps({"date": date.today().isoformat(), "insights": text}))
 
 
 def has_fresh_cache() -> bool:
-    """Return True if today's insights are already cached on disk."""
     if not CACHE_PATH.exists():
         return False
     try:
@@ -151,7 +292,6 @@ def has_fresh_cache() -> bool:
 
 
 def get_cached_insights(summary: list[dict], activities: list[dict]) -> str:
-    """Return today's cached insights, generating them if not yet cached."""
     if CACHE_PATH.exists():
         try:
             cached = json.loads(CACHE_PATH.read_text())
@@ -159,46 +299,12 @@ def get_cached_insights(summary: list[dict], activities: list[dict]) -> str:
                 return cached["insights"]
         except Exception:
             pass
-
     text = generate_insights(summary, activities)
     _save_cache(text)
     return text
 
 
 def refresh_insights(summary: list[dict], activities: list[dict]) -> str:
-    """Bypass cache, generate fresh insights, persist, and return."""
     text = generate_insights(summary, activities)
     _save_cache(text)
     return text
-
-
-# ---------------------------------------------------------------------------
-# Test block
-# ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    import database
-
-    print("Loading data from database…")
-    summary    = database.get_daily_summary(days=30)
-    activities = database.get_activities(days=30)
-    print(f"  {len(summary)} daily records, {len(activities)} activities\n")
-
-    print("Calling Claude API (bypassing cache)…")
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    client  = anthropic.Anthropic(api_key=api_key)
-    message = client.messages.create(
-        model=MODEL,
-        max_tokens=MAX_TOKENS,
-        messages=[{"role": "user", "content": _build_prompt(summary, activities)}],
-    )
-
-    text = message.content[0].text
-    print("=" * 60)
-    print(text)
-    print("=" * 60)
-    print(f"\nTokens — input: {message.usage.input_tokens:,}  output: {message.usage.output_tokens:,}")
-
-    # Save to cache so the dashboard picks it up immediately
-    _save_cache(text)
-    print("Saved to cache.")

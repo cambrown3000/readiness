@@ -1,17 +1,12 @@
-# app.py — Streamlit front-end for the Readiness dashboard.
-# Handles Google OAuth login, renders daily readiness scores, activity metrics,
-# nutrition data, and AI-generated insights. Pulls data from the SQLite database
-# via database.py and calls insights.py for Claude-powered pattern analysis.
-
-import html as html_lib
+import json
 import os
 
-import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+import streamlit as st
+from apscheduler.schedulers.background import BackgroundScheduler
 from datetime import date, datetime
 from dotenv import load_dotenv
-from apscheduler.schedulers.background import BackgroundScheduler
 
 import auth
 import database
@@ -20,8 +15,6 @@ import insights
 
 load_dotenv()
 
-# Inject Streamlit Cloud secrets into os.environ so all os.getenv() calls work
-# in production without changing any other file. Locally, .env takes precedence.
 try:
     for _k, _v in st.secrets.items():
         os.environ.setdefault(_k, str(_v))
@@ -29,23 +22,19 @@ except Exception:
     pass
 
 # ---------------------------------------------------------------------------
-# Page config — must be the first Streamlit call
+# Page config
 # ---------------------------------------------------------------------------
 
 st.set_page_config(
     page_title="Readiness",
     page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="expanded",
+    layout="centered",
+    initial_sidebar_state="collapsed",
     menu_items={"About": "Personal health dashboard combining Garmin + nutrition data."},
 )
 
-# Auto-refresh every 5 minutes (browser-level, no extra package needed)
-st.markdown('<meta http-equiv="refresh" content="300">', unsafe_allow_html=True)
-
-
 # ---------------------------------------------------------------------------
-# Background Garmin sync — 30-minute interval, started once per session
+# Background Garmin sync — once per session, every 30 minutes
 # ---------------------------------------------------------------------------
 
 def _background_garmin_sync():
@@ -67,17 +56,15 @@ if "scheduler_started" not in st.session_state:
         _background_garmin_sync,
         "interval",
         minutes=30,
-        next_run_time=datetime.now(),  # run immediately on first start
+        next_run_time=datetime.now(),
     )
     _scheduler.start()
     st.session_state["scheduler_started"] = True
 
-
 _qp = st.query_params
 
-
 # ---------------------------------------------------------------------------
-# Nutrition intake via GET query params (called by Apple Shortcuts)
+# Nutrition intake via GET query params (Apple Shortcuts)
 # ---------------------------------------------------------------------------
 
 if "nutrition" in _qp:
@@ -85,14 +72,12 @@ if "nutrition" in _qp:
     if _secret and _qp.get("secret") != _secret:
         st.error("Unauthorized — wrong or missing secret.")
         st.stop()
-
     _today = date.today().isoformat()
-    _date = _qp.get("date", _today)
-    _meal = _qp.get("last_meal_time")
+    _date  = _qp.get("date", _today)
+    _meal  = _qp.get("last_meal_time")
     if _meal and " " not in _meal:
         _seconds = "" if _meal.count(":") >= 2 else ":00"
         _meal = f"{_date} {_meal}{_seconds}"
-
     _rec = {
         "date":           _date,
         "calories":       float(_qp["calories"])   if "calories"   in _qp else None,
@@ -107,12 +92,10 @@ if "nutrition" in _qp:
     st.success(f"✓ Nutrition logged for {_rec['date']}")
     st.stop()
 
-
 # ---------------------------------------------------------------------------
-# Auth — must run before any dashboard content
+# Auth
 # ---------------------------------------------------------------------------
 
-# Step 1: if Google just redirected back with ?code=..., exchange it for user info
 if "code" in _qp and "user" not in st.session_state:
     with st.spinner("Signing in…"):
         _user = auth.exchange_code_for_user_info(_qp["code"], _qp.get("state"))
@@ -123,34 +106,23 @@ if "code" in _qp and "user" not in st.session_state:
     else:
         st.error("Sign-in failed — please try again.")
 
-# Step 2: if no user in session yet, show the login page and stop
 if "user" not in st.session_state:
     st.markdown(
         """
         <div style="
-            display: flex; flex-direction: column;
-            align-items: center; justify-content: center;
-            min-height: 70vh; gap: 0;
-            text-align: center;
-            padding: 4rem 1rem 2rem;
+            display:flex;flex-direction:column;align-items:center;
+            justify-content:center;min-height:70vh;gap:0;
+            text-align:center;padding:4rem 1rem 2rem;
         ">
-            <div style="font-size: 3.5rem; margin-bottom: 0.75rem; line-height: 1;">📊</div>
-            <h1 style="
-                font-size: 3rem; font-weight: 700;
-                margin: 0 0 0.5rem 0; letter-spacing: -0.5px;
-            ">Readiness</h1>
-            <p style="
-                color: #9ca3af; font-size: 1.1rem;
-                margin: 0 0 1.5rem 0; font-weight: 400;
-            ">Your personal health intelligence dashboard</p>
-            <div style="
-                width: 40px; height: 2px;
-                background: #374151; margin: 0 auto 1.5rem;
-            "></div>
-            <p style="
-                color: #6b7280; font-size: 0.9rem;
-                max-width: 400px; line-height: 1.65; margin: 0 0 2.5rem 0;
-            ">
+            <div style="font-size:3.5rem;margin-bottom:0.75rem;line-height:1;">📊</div>
+            <h1 style="font-size:3rem;font-weight:700;margin:0 0 0.5rem 0;letter-spacing:-0.5px;">
+                Readiness
+            </h1>
+            <p style="color:#9ca3af;font-size:1.1rem;margin:0 0 1.5rem 0;font-weight:400;">
+                Your personal health intelligence dashboard
+            </p>
+            <div style="width:40px;height:2px;background:#374151;margin:0 auto 1.5rem;"></div>
+            <p style="color:#6b7280;font-size:0.9rem;max-width:400px;line-height:1.65;margin:0 0 2.5rem 0;">
                 Combines Garmin training data and nutrition to surface patterns
                 about your health that no single app can show you.
             </p>
@@ -162,89 +134,94 @@ if "user" not in st.session_state:
     with _c2:
         st.link_button("Sign in with Google", auth.get_authorization_url(), use_container_width=True)
     st.markdown(
-        """
-        <p style="
-            text-align: center; color: #4b5563;
-            font-size: 0.78rem; margin-top: 1.5rem;
-        ">Your data stays yours — secured with Google OAuth</p>
-        """,
+        "<p style='text-align:center;color:#4b5563;font-size:0.78rem;margin-top:1.5rem;'>"
+        "Your data stays yours — secured with Google OAuth</p>",
         unsafe_allow_html=True,
     )
     st.stop()
 
-# Authenticated — pull user from session for the rest of the page
 _user = st.session_state["user"]
 
+# ---------------------------------------------------------------------------
+# Mobile CSS
+# ---------------------------------------------------------------------------
+
+st.markdown("""
+<style>
+/* Layout */
+.block-container { padding-top: 1rem !important; padding-bottom: 80px !important; max-width: 680px; }
+#MainMenu, footer { visibility: hidden; }
+[data-testid="collapsedControl"] { display: none; }
+
+/* Cards */
+.r-card {
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    border-radius: 12px;
+    padding: 1.25rem 1.25rem 1rem;
+    margin-bottom: 1rem;
+}
+
+/* Metric pills */
+.pill-row { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 1rem; }
+.pill {
+    background: #1f2937;
+    border-radius: 999px;
+    padding: 0.25rem 0.75rem;
+    font-size: 0.78rem;
+    color: #9ca3af;
+    white-space: nowrap;
+}
+.pill span { color: #e5e7eb; font-weight: 600; }
+
+/* Bottom nav */
+.bottom-nav {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    height: 56px; background: #111;
+    display: flex; z-index: 9999;
+    border-top: 1px solid #222;
+}
+.bottom-nav a {
+    flex: 1; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    text-decoration: none; font-size: 11px;
+    gap: 2px; line-height: 1.2;
+    transition: color 0.15s;
+}
+.bottom-nav a .nav-icon { font-size: 18px; }
+</style>
+""", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
-# Cached data loaders — 5-minute TTL matches auto-refresh cadence
+# Session state defaults
+# ---------------------------------------------------------------------------
+
+for _key, _default in [
+    ("active_tab",       "today"),
+    ("today_messages",   []),
+    ("pattern_messages", []),
+    ("pattern_window",   30),
+]:
+    if _key not in st.session_state:
+        st.session_state[_key] = _default
+
+# Resolve active tab from URL param (tab switching uses ?tab= links)
+_tab_param = _qp.get("tab", "")
+if _tab_param in ("today", "patterns", "history"):
+    st.session_state["active_tab"] = _tab_param
+active_tab = st.session_state["active_tab"]
+
+# ---------------------------------------------------------------------------
+# Data loaders
 # ---------------------------------------------------------------------------
 
 @st.cache_data(ttl=300)
 def load_summary(days: int) -> list[dict]:
     return database.get_daily_summary(days=days)
 
-
 @st.cache_data(ttl=300)
 def load_activities(days: int) -> list[dict]:
     return database.get_activities(days=days)
-
-
-# ---------------------------------------------------------------------------
-# Sidebar
-# ---------------------------------------------------------------------------
-
-with st.sidebar:
-    st.markdown("## Readiness")
-    _first_name = (_user.get("name") or "").split()[0]
-    st.caption(f"{_first_name} · {_user.get('email', '')}")
-    st.divider()
-
-    days = st.selectbox(
-        "Date range",
-        options=[7, 14, 30, 60, 90],
-        index=2,
-        format_func=lambda x: f"Last {x} days",
-    )
-
-    st.divider()
-
-    if st.button("Sync Garmin now", use_container_width=True, type="primary"):
-        with st.spinner("Connecting to Garmin Connect…"):
-            try:
-                client = garmin_sync.get_client()
-                database.upsert_activities(garmin_sync.fetch_activities(client, days=days))
-                database.upsert_sleep(garmin_sync.fetch_sleep(client, days=days))
-                database.upsert_hrv(garmin_sync.fetch_hrv(client, days=days))
-                database.upsert_daily_stats(garmin_sync.fetch_daily_stats(client, days=days))
-                st.cache_data.clear()
-                st.success(f"Synced {days} days of data")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Sync failed: {e}")
-
-    st.divider()
-    st.caption(f"Loaded {datetime.now().strftime('%-I:%M %p')}")
-    if st.button("Sign out", use_container_width=True):
-        del st.session_state["user"]
-        st.rerun()
-
-
-# ---------------------------------------------------------------------------
-# Load data
-# ---------------------------------------------------------------------------
-
-summary = load_summary(days)
-activities_raw = load_activities(days)
-
-df = pd.DataFrame(summary) if summary else pd.DataFrame()
-df_act = pd.DataFrame(activities_raw) if activities_raw else pd.DataFrame()
-
-today_str = date.today().isoformat()
-today_row = next((r for r in summary if r["date"] == today_str), summary[0] if summary else {})
-# Use the 7 most recent days (excluding today) for delta baselines
-recent_7 = [r for r in summary if r["date"] != today_str][:7]
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -255,20 +232,11 @@ def field_avg(rows: list[dict], key: str) -> float | None:
     return sum(vals) / len(vals) if vals else None
 
 
-def delta_label(today_val, avg_val, unit: str = "") -> str | None:
-    if today_val is None or avg_val is None:
-        return None
-    diff = today_val - avg_val
-    sign = "+" if diff >= 0 else ""
-    return f"{sign}{diff:.0f}{unit} vs 7d avg"
-
-
-# Shared Plotly layout — zero-gridline, transparent background, dark-text-friendly
 _CHART = dict(
     plot_bgcolor="rgba(0,0,0,0)",
     paper_bgcolor="rgba(0,0,0,0)",
-    margin=dict(l=4, r=4, t=40, b=4),
-    font=dict(color="#9ca3af", size=12),
+    margin=dict(l=4, r=4, t=36, b=4),
+    font=dict(color="#9ca3af", size=11),
     xaxis=dict(showgrid=False, zeroline=False, showline=False),
     yaxis=dict(showgrid=False, zeroline=False, showline=False),
     hovermode="x unified",
@@ -282,291 +250,412 @@ def line_chart(x, y, color: str, title: str, y_range=None) -> go.Figure:
         x=x, y=y,
         mode="lines+markers",
         line=dict(color=color, width=2),
-        marker=dict(size=5),
+        marker=dict(size=4),
         showlegend=False,
     ))
-    layout = dict(**_CHART, title=dict(text=title, font=dict(size=13)))
+    layout = dict(**_CHART, title=dict(text=title, font=dict(size=12)))
     if y_range:
         layout["yaxis"] = dict(showgrid=False, zeroline=False, showline=False, range=y_range)
     fig.update_layout(**layout)
     return fig
 
 
-# ---------------------------------------------------------------------------
-# Header
-# ---------------------------------------------------------------------------
-
-st.markdown(f"# Readiness")
-st.markdown(f"**{date.today().strftime('%A, %B %-d, %Y')}**")
-st.divider()
+def _pill(label: str, value: str) -> str:
+    return f'<div class="pill">{label} <span>{value}</span></div>'
 
 
-# ---------------------------------------------------------------------------
-# Section 1 — Today's Snapshot
-# ---------------------------------------------------------------------------
-
-st.subheader("Today")
-
-c1, c2, c3, c4 = st.columns(4)
-
-rhr      = today_row.get("resting_hr")
-rhr_avg  = field_avg(recent_7, "resting_hr")
-c1.metric(
-    "Resting HR",
-    f"{int(rhr)} bpm" if rhr else "—",
-    delta=delta_label(rhr, rhr_avg, " bpm"),
-    delta_color="inverse",   # lower is better
-)
-
-sleep_score = today_row.get("sleep_score")
-sleep_avg   = field_avg(recent_7, "sleep_score")
-c2.metric(
-    "Sleep Score",
-    f"{int(sleep_score)}" if sleep_score else "—",
-    delta=delta_label(sleep_score, sleep_avg),
-    delta_color="normal",
-)
-
-steps      = today_row.get("steps")
-steps_avg  = field_avg(recent_7, "steps")
-c3.metric(
-    "Steps",
-    f"{int(steps):,}" if steps else "—",
-    delta=delta_label(steps, steps_avg),
-    delta_color="normal",
-)
-
-stress     = today_row.get("stress_avg")
-stress_avg = field_avg(recent_7, "stress_avg")
-c4.metric(
-    "Avg Stress",
-    f"{int(stress)}" if stress else "—",
-    delta=delta_label(stress, stress_avg),
-    delta_color="inverse",   # lower is better
-)
-
-st.divider()
-
-
-# ---------------------------------------------------------------------------
-# Section 2 — Trend Charts
-# ---------------------------------------------------------------------------
-
-st.subheader("Trends")
-
-if not df.empty:
-    df_plot = df.sort_values("date").copy()
-    dates = df_plot["date"]
-
-    row1_l, row1_r = st.columns(2)
-
-    with row1_l:
-        st.plotly_chart(
-            line_chart(dates, df_plot["resting_hr"], "#ef4444", "Resting Heart Rate (bpm)"),
-            use_container_width=True,
-        )
-
-    with row1_r:
-        st.plotly_chart(
-            line_chart(dates, df_plot["sleep_score"], "#818cf8", "Sleep Score", y_range=[0, 100]),
-            use_container_width=True,
-        )
-
-    row2_l, row2_r = st.columns(2)
-
-    with row2_l:
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=dates, y=df_plot["nutrition_calories"],
-            mode="lines+markers",
-            line=dict(color="#f59e0b", width=2),
-            marker=dict(size=5),
-            name="Food",
-        ))
-        fig.add_trace(go.Scatter(
-            x=dates, y=df_plot["active_calories"],
-            mode="lines+markers",
-            line=dict(color="#10b981", width=2, dash="dot"),
-            marker=dict(size=5),
-            name="Active",
-        ))
-        fig.update_layout(**_CHART, title=dict(text="Calories — Food vs Active", font=dict(size=13)))
-        st.plotly_chart(fig, use_container_width=True)
-
-    with row2_r:
-        fig = go.Figure()
-        fig.add_trace(go.Bar(
-            x=dates, y=df_plot["steps"],
-            marker_color="#3b82f6",
-            showlegend=False,
-        ))
-        fig.update_layout(**_CHART, title=dict(text="Daily Steps", font=dict(size=13)), bargap=0.15)
-        st.plotly_chart(fig, use_container_width=True)
-
-else:
-    st.info("No trend data available. Run a Garmin sync from the sidebar.")
-
-st.divider()
-
-
-# ---------------------------------------------------------------------------
-# Section 3 — Activity Log
-# ---------------------------------------------------------------------------
-
-st.subheader("Recent Activities")
-
-if not df_act.empty:
-    act = df_act.copy()
-    act["Date"]         = pd.to_datetime(act["start_time"]).dt.strftime("%b %-d")
-    act["Type"]         = act["type"].str.replace("_", " ").str.title()
-    act["Distance (km)"] = act["distance_meters"].apply(
-        lambda x: f"{x / 1000:.2f}" if pd.notna(x) and x else "—"
-    )
-    act["Duration (min)"] = act["duration_seconds"].apply(
-        lambda x: int(x / 60) if pd.notna(x) and x else "—"
-    )
-    act["Avg HR"]       = act["average_hr"].apply(
-        lambda x: int(x) if pd.notna(x) and x else "—"
-    )
-    act["Pace (min/km)"] = act["average_pace"].apply(
-        lambda x: f"{x:.2f}" if pd.notna(x) and x else "—"
-    )
-    act["Calories"]     = act["calories"].apply(
-        lambda x: int(x) if pd.notna(x) and x else "—"
-    )
-
-    st.dataframe(
-        act[["Date", "Type", "Distance (km)", "Duration (min)", "Avg HR", "Pace (min/km)", "Calories"]].head(10),
-        use_container_width=True,
-        hide_index=True,
-    )
-else:
-    st.caption("No activities in the selected date range.")
-
-st.divider()
-
-
-# ---------------------------------------------------------------------------
-# Section 4 — Nutrition
-# ---------------------------------------------------------------------------
-
-st.subheader("Nutrition — Today")
-
-kcal      = today_row.get("nutrition_calories") or 0
-protein   = today_row.get("protein_g") or 0
-carbs     = today_row.get("carbs_g") or 0
-fat       = today_row.get("fat_g") or 0
-fiber     = today_row.get("fiber_g") or 0
-water_ml  = today_row.get("water_ml") or 0
-last_meal = today_row.get("last_meal_time")
-
-nc1, nc2, nc3, nc4 = st.columns(4)
-nc1.metric("Calories",  f"{int(kcal):,} kcal" if kcal else "—")
-nc2.metric("Protein",   f"{int(protein)}g"     if protein else "—")
-nc3.metric("Carbs",     f"{int(carbs)}g"        if carbs else "—")
-nc4.metric("Fat",       f"{int(fat)}g"          if fat else "—")
-
-# Macro split bar (calories from each macro)
-macro_kcal = protein * 4 + carbs * 4 + fat * 9
-if macro_kcal > 0:
-    macros = [
-        ("Protein", protein * 4, "#818cf8"),
-        ("Carbs",   carbs * 4,   "#f59e0b"),
-        ("Fat",     fat * 9,     "#ef4444"),
-    ]
-    fig = go.Figure()
-    for label, val, color in macros:
-        pct = round(val / macro_kcal * 100, 1)
-        fig.add_trace(go.Bar(
-            name=label,
-            x=[pct], y=[""],
-            orientation="h",
-            marker_color=color,
-            text=f"{label} {pct:.0f}%",
-            textposition="inside",
-            insidetextanchor="middle",
-            showlegend=False,
-        ))
-    fig.update_layout(
-        barmode="stack",
-        height=60,
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)",
-        margin=dict(l=0, r=0, t=4, b=4),
-        font=dict(color="#e5e7eb", size=11),
-        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[0, 100]),
-        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-        hovermode=False,
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-extra_l, extra_r, extra_meal, _ = st.columns([1, 1, 2, 2])
-extra_l.metric("Fiber",  f"{int(fiber)}g"              if fiber    else "—")
-extra_r.metric("Water",  f"{water_ml / 1000:.1f} L"    if water_ml else "—")
-if last_meal:
-    extra_meal.markdown(f"**Last meal:** {last_meal}")
-elif kcal == 0:
-    st.caption("No nutrition logged for today. Wire up the Apple Shortcut to start populating this panel.")
-
-st.divider()
-
-
-# ---------------------------------------------------------------------------
-# Section 5 — Insights
-# ---------------------------------------------------------------------------
-
-st.subheader("Insights")
-
-# Load insights — fast path if cache is fresh, API call otherwise
-if insights.has_fresh_cache():
-    insights_text = insights.get_cached_insights(summary, activities_raw)
-else:
-    with st.spinner("Analyzing your data with Claude…"):
-        try:
-            insights_text = insights.get_cached_insights(summary, activities_raw)
-        except Exception as e:
-            insights_text = None
-            st.error(f"Could not generate insights: {e}")
-
-if insights_text:
-    safe = html_lib.escape(insights_text).replace("\n\n", "<br><br>").replace("\n", "<br>")
-    st.markdown(
-        f"""
-        <div style="
-            border: 2px dashed #374151;
-            border-radius: 10px;
-            padding: 2rem 2.25rem;
-            background: rgba(255,255,255,0.015);
-            color: #d1d5db;
-            line-height: 1.75;
-            font-size: 0.95rem;
-            margin-bottom: 0.75rem;
-        ">{safe}</div>
-        """,
-        unsafe_allow_html=True,
-    )
-    # Show cache date if available
+def _send_chat(msg_key: str, new_message: str, summary, activities, mode: str):
+    history = list(st.session_state[msg_key])
+    st.session_state[msg_key].append({"role": "user", "content": new_message})
     try:
-        import json
-        cached = json.loads(insights.CACHE_PATH.read_text())
-        st.caption(f"Last analyzed: {cached.get('date', '—')}")
-    except Exception:
-        pass
+        response = insights.chat_with_data(history, new_message, summary, activities, mode=mode)
+    except Exception as e:
+        response = f"Sorry, I couldn't process that right now. ({e})"
+    st.session_state[msg_key].append({"role": "assistant", "content": response})
+    st.rerun()
 
-if st.button("Refresh insights"):
-    with st.spinner("Regenerating with Claude…"):
-        try:
-            insights.refresh_insights(summary, activities_raw)
-            st.rerun()
-        except Exception as e:
-            st.error(f"Refresh failed: {e}")
+
+def _render_chat(msg_key: str, summary, activities, mode: str, input_key: str):
+    for msg in st.session_state[msg_key][-20:]:
+        with st.chat_message(msg["role"]):
+            st.write(msg["content"])
+    user_input = st.chat_input("Ask about your health data…", key=input_key)
+    if user_input:
+        _send_chat(msg_key, user_input, summary, activities, mode)
+
+
+def _render_chips(questions: list, msg_key: str, chip_prefix: str, summary, activities, mode: str):
+    if not questions:
+        return
+    for i, q in enumerate(questions[:3]):
+        if st.button(q, key=f"{chip_prefix}_{i}", use_container_width=True):
+            _send_chat(msg_key, q, summary, activities, mode)
 
 
 # ---------------------------------------------------------------------------
-# Direct-execution guard — ensures tables exist when running `python app.py`
+# Tab: Today
 # ---------------------------------------------------------------------------
 
-if __name__ == "__main__":
-    print("Initializing database…")
-    database.init_db()
-    print("Done. Run with: .venv/bin/streamlit run app.py")
+def render_today():
+    summary_7    = load_summary(7)
+    activities_7 = load_activities(7)
+    today_str    = date.today().isoformat()
+    today_row    = next((r for r in summary_7 if r["date"] == today_str), summary_7[0] if summary_7 else {})
+
+    # Header
+    first_name = (_user.get("name") or "").split()[0]
+    st.markdown(f"### Good morning, {first_name} 👋")
+    st.caption(date.today().strftime("%A, %B %-d, %Y"))
+
+    # Metric pills
+    def fv(key): return today_row.get(key)
+    pills = []
+    if fv("resting_hr"):    pills.append(_pill("❤️", f"{int(fv('resting_hr'))} bpm"))
+    if fv("sleep_score"):   pills.append(_pill("😴", str(int(fv("sleep_score")))))
+    if fv("hrv_last_night"): pills.append(_pill("📊", f"{int(fv('hrv_last_night'))}ms HRV"))
+    if fv("body_battery_high"): pills.append(_pill("🔋", str(int(fv("body_battery_high")))))
+    if fv("steps"):         pills.append(_pill("👟", f"{int(fv('steps')):,}"))
+    if pills:
+        st.markdown('<div class="pill-row">' + "".join(pills) + "</div>", unsafe_allow_html=True)
+
+    st.divider()
+
+    # Briefing card
+    if not summary_7:
+        st.info("No health data yet — sync Garmin from the History tab to get started.")
+        return
+
+    # Refresh button lives above the card content
+    col_title, col_btn = st.columns([4, 1])
+    with col_title:
+        st.markdown("**Today's Briefing**")
+    with col_btn:
+        refresh_clicked = st.button("↻", key="refresh_today", help="Refresh briefing")
+
+    with st.container():
+        if refresh_clicked:
+            with st.spinner("Regenerating…"):
+                try:
+                    briefing_data = insights.refresh_today_briefing(summary_7, activities_7)
+                    st.session_state["today_briefing"] = briefing_data
+                except Exception as e:
+                    st.error(f"Could not refresh: {e}")
+                    briefing_data = st.session_state.get("today_briefing", {})
+        elif "today_briefing" not in st.session_state:
+            with st.spinner("Generating your daily briefing…"):
+                try:
+                    briefing_data = insights.generate_today_briefing(summary_7, activities_7)
+                    st.session_state["today_briefing"] = briefing_data
+                except Exception as e:
+                    st.markdown(
+                        f'<div class="r-card" style="color:#ef4444;">Could not generate briefing: {e}</div>',
+                        unsafe_allow_html=True,
+                    )
+                    briefing_data = {}
+        else:
+            briefing_data = st.session_state["today_briefing"]
+
+    briefing_text = briefing_data.get("briefing", "")
+    if briefing_text:
+        st.markdown(
+            f'<div class="r-card" style="color:#d1d5db;line-height:1.75;font-size:0.95rem;">'
+            f'{briefing_text}</div>',
+            unsafe_allow_html=True,
+        )
+
+    # Suggested question chips
+    questions = briefing_data.get("suggested_questions", [])
+    if questions:
+        st.caption("Suggested questions")
+        _render_chips(questions, "today_messages", "today_chip", summary_7, activities_7, "today")
+
+    st.divider()
+
+    # Chat
+    _render_chat("today_messages", summary_7, activities_7, "today", "today_chat")
+
+
+# ---------------------------------------------------------------------------
+# Tab: Patterns
+# ---------------------------------------------------------------------------
+
+def render_patterns():
+    # Window selector
+    window_map   = {"7 days": 7, "30 days": 30, "6 months": 180, "12 months": 365}
+    window_labels = list(window_map.keys())
+    current_days  = st.session_state["pattern_window"]
+    current_label = next((k for k, v in window_map.items() if v == current_days), "30 days")
+
+    selected = st.radio(
+        "Time window",
+        window_labels,
+        index=window_labels.index(current_label),
+        horizontal=True,
+        label_visibility="collapsed",
+    )
+    days = window_map[selected]
+    if days != st.session_state["pattern_window"]:
+        st.session_state["pattern_window"] = days
+        if "pattern_analysis" in st.session_state:
+            del st.session_state["pattern_analysis"]
+
+    summary    = load_summary(days)
+    activities = load_activities(days)
+
+    if not summary:
+        st.info("No data for this window — sync Garmin from the History tab.")
+        return
+
+    # Analysis card
+    col_title, col_btn = st.columns([4, 1])
+    with col_title:
+        st.markdown("**Pattern Analysis**")
+    with col_btn:
+        refresh_clicked = st.button("↻", key="refresh_patterns", help="Refresh analysis")
+
+    cache_key = f"pattern_analysis_{days}"
+    if refresh_clicked:
+        with st.spinner("Regenerating…"):
+            try:
+                analysis_data = insights.refresh_pattern_analysis(summary, activities, days)
+                st.session_state[cache_key] = analysis_data
+            except Exception as e:
+                st.error(f"Could not refresh: {e}")
+                analysis_data = st.session_state.get(cache_key, {})
+    elif cache_key not in st.session_state:
+        with st.spinner(f"Analyzing {selected} of data…"):
+            try:
+                analysis_data = insights.generate_pattern_analysis(summary, activities, days)
+                st.session_state[cache_key] = analysis_data
+            except Exception as e:
+                st.markdown(
+                    f'<div class="r-card" style="color:#ef4444;">Could not generate analysis: {e}</div>',
+                    unsafe_allow_html=True,
+                )
+                analysis_data = {}
+    else:
+        analysis_data = st.session_state[cache_key]
+
+    analysis_text = analysis_data.get("analysis", "")
+    if analysis_text:
+        st.markdown(
+            f'<div class="r-card" style="color:#d1d5db;line-height:1.75;font-size:0.95rem;">'
+            f'{analysis_text}</div>',
+            unsafe_allow_html=True,
+        )
+
+    # Charts in expanders
+    if summary:
+        df = pd.DataFrame(summary).sort_values("date")
+        dates = df["date"]
+
+        with st.expander("Sleep trends"):
+            st.plotly_chart(
+                line_chart(dates, df["sleep_score"], "#818cf8", "Sleep Score", y_range=[0, 100]),
+                use_container_width=True,
+            )
+
+        with st.expander("Training load"):
+            act_df = pd.DataFrame(load_activities(days))
+            if not act_df.empty:
+                act_df["date"] = pd.to_datetime(act_df["start_time"]).dt.date.astype(str)
+                daily_km = act_df.groupby("date").apply(
+                    lambda g: g["distance_meters"].sum() / 1000
+                ).reset_index(name="km")
+                fig = go.Figure(go.Bar(
+                    x=daily_km["date"], y=daily_km["km"],
+                    marker_color="#10b981", showlegend=False,
+                ))
+                fig.update_layout(**_CHART, title=dict(text="Daily Activity Distance (km)", font=dict(size=12)), bargap=0.2)
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.caption("No activities in this period.")
+
+        with st.expander("Recovery metrics"):
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=dates, y=df["resting_hr"],
+                mode="lines+markers", name="Resting HR",
+                line=dict(color="#ef4444", width=2), marker=dict(size=4),
+            ))
+            if df["hrv_last_night"].notna().any():
+                fig.add_trace(go.Scatter(
+                    x=dates, y=df["hrv_last_night"],
+                    mode="lines+markers", name="HRV",
+                    line=dict(color="#60a5fa", width=2, dash="dot"), marker=dict(size=4),
+                    yaxis="y2",
+                ))
+                fig.update_layout(
+                    yaxis2=dict(overlaying="y", side="right", showgrid=False, zeroline=False, showline=False),
+                )
+            fig.update_layout(**_CHART, title=dict(text="Resting HR & HRV", font=dict(size=12)))
+            st.plotly_chart(fig, use_container_width=True)
+
+        with st.expander("Nutrition overview"):
+            if df["nutrition_calories"].notna().any():
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=dates, y=df["nutrition_calories"],
+                    mode="lines+markers", name="Calories",
+                    line=dict(color="#f59e0b", width=2), marker=dict(size=4),
+                ))
+                fig.add_trace(go.Scatter(
+                    x=dates, y=df["protein_g"] * 4,
+                    mode="lines+markers", name="Protein kcal",
+                    line=dict(color="#818cf8", width=1, dash="dot"), marker=dict(size=3),
+                ))
+                fig.update_layout(**_CHART, title=dict(text="Calories & Protein", font=dict(size=12)))
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.caption("No nutrition data in this period.")
+
+    # Suggested question chips
+    questions = analysis_data.get("suggested_questions", [])
+    if questions:
+        st.caption("Suggested questions")
+        _render_chips(questions, "pattern_messages", "pattern_chip", summary, activities, "patterns")
+
+    st.divider()
+
+    # Chat
+    _render_chat("pattern_messages", summary, activities, "patterns", "patterns_chat")
+
+
+# ---------------------------------------------------------------------------
+# Tab: History
+# ---------------------------------------------------------------------------
+
+def render_history():
+    summary_30    = load_summary(30)
+    activities_30 = load_activities(30)
+
+    # Sync controls
+    col_sync, col_info = st.columns([2, 3])
+    with col_sync:
+        if st.button("Sync Garmin now", type="primary", use_container_width=True):
+            with st.spinner("Connecting to Garmin Connect…"):
+                try:
+                    gc = garmin_sync.get_client()
+                    database.upsert_activities(garmin_sync.fetch_activities(gc, days=30))
+                    database.upsert_sleep(garmin_sync.fetch_sleep(gc, days=30))
+                    database.upsert_hrv(garmin_sync.fetch_hrv(gc, days=30))
+                    database.upsert_daily_stats(garmin_sync.fetch_daily_stats(gc, days=30))
+                    st.cache_data.clear()
+                    st.success("Synced 30 days")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Sync failed: {e}")
+    with col_info:
+        st.caption(f"Last loaded: {datetime.now().strftime('%-I:%M %p')}")
+
+    st.divider()
+
+    # Activities table
+    with st.expander("Recent activities", expanded=False):
+        if activities_30:
+            act = pd.DataFrame(activities_30).copy()
+            act["Date"]           = pd.to_datetime(act["start_time"]).dt.strftime("%b %-d")
+            act["Type"]           = act["type"].str.replace("_", " ").str.title()
+            act["Distance (km)"]  = act["distance_meters"].apply(
+                lambda x: f"{x/1000:.2f}" if pd.notna(x) and x else "—"
+            )
+            act["Duration (min)"] = act["duration_seconds"].apply(
+                lambda x: int(x/60) if pd.notna(x) and x else "—"
+            )
+            act["Avg HR"]         = act["average_hr"].apply(
+                lambda x: int(x) if pd.notna(x) and x else "—"
+            )
+            act["Pace"]           = act["average_pace"].apply(
+                lambda x: f"{x:.2f}" if pd.notna(x) and x else "—"
+            )
+            act["Calories"]       = act["calories"].apply(
+                lambda x: int(x) if pd.notna(x) and x else "—"
+            )
+            st.dataframe(
+                act[["Date", "Type", "Distance (km)", "Duration (min)", "Avg HR", "Pace", "Calories"]].head(30),
+                use_container_width=True, hide_index=True,
+            )
+        else:
+            st.caption("No activities found.")
+
+    # Daily stats table
+    with st.expander("Daily stats", expanded=False):
+        if summary_30:
+            df = pd.DataFrame(summary_30)[
+                ["date", "resting_hr", "sleep_score", "stress_avg", "steps", "active_calories",
+                 "hrv_last_night", "body_battery_high"]
+            ].copy()
+            df.columns = ["Date", "RHR", "Sleep", "Stress", "Steps", "Active kcal", "HRV", "Battery"]
+            st.dataframe(df, use_container_width=True, hide_index=True)
+        else:
+            st.caption("No stats found.")
+
+    # Sleep log
+    with st.expander("Sleep log", expanded=False):
+        if summary_30:
+            df = pd.DataFrame(summary_30)[
+                ["date", "sleep_score", "total_sleep_seconds",
+                 "deep_sleep_seconds", "rem_sleep_seconds", "awake_seconds"]
+            ].copy()
+            for col in ["total_sleep_seconds", "deep_sleep_seconds", "rem_sleep_seconds", "awake_seconds"]:
+                df[col] = df[col].apply(lambda x: round(x/3600, 1) if pd.notna(x) and x else None)
+            df.columns = ["Date", "Score", "Total h", "Deep h", "REM h", "Awake h"]
+            st.dataframe(df, use_container_width=True, hide_index=True)
+        else:
+            st.caption("No sleep data found.")
+
+    # Nutrition log
+    with st.expander("Nutrition log", expanded=False):
+        nutr = [r for r in summary_30 if r.get("nutrition_calories")]
+        if nutr:
+            df = pd.DataFrame(nutr)[
+                ["date", "nutrition_calories", "protein_g", "carbs_g", "fat_g", "fiber_g", "water_ml"]
+            ].copy()
+            df.columns = ["Date", "Calories", "Protein g", "Carbs g", "Fat g", "Fiber g", "Water ml"]
+            st.dataframe(df, use_container_width=True, hide_index=True)
+        else:
+            st.caption("No nutrition data logged yet.")
+
+    st.divider()
+
+    # Account
+    st.caption(f"Signed in as {_user.get('email', '')}")
+    if st.button("Sign out", use_container_width=True):
+        del st.session_state["user"]
+        st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# Main routing
+# ---------------------------------------------------------------------------
+
+if active_tab == "today":
+    render_today()
+elif active_tab == "patterns":
+    render_patterns()
+else:
+    render_history()
+
+# ---------------------------------------------------------------------------
+# Bottom tab bar
+# ---------------------------------------------------------------------------
+
+_colors = {
+    "today":    "#60a5fa" if active_tab == "today"    else "#6b7280",
+    "patterns": "#60a5fa" if active_tab == "patterns" else "#6b7280",
+    "history":  "#60a5fa" if active_tab == "history"  else "#6b7280",
+}
+
+st.markdown(f"""
+<div class="bottom-nav">
+    <a href="?tab=today" style="color:{_colors['today']};">
+        <span class="nav-icon">📅</span>Today
+    </a>
+    <a href="?tab=patterns" style="color:{_colors['patterns']};">
+        <span class="nav-icon">📈</span>Patterns
+    </a>
+    <a href="?tab=history" style="color:{_colors['history']};">
+        <span class="nav-icon">📋</span>History
+    </a>
+</div>
+""", unsafe_allow_html=True)

@@ -2,6 +2,8 @@
 data/*.db
 data/google_credentials.json
 data/insights_cache.json
+data/today_cache.json
+data/patterns_cache_*.json
 data/.pkce_verifier.json
 .streamlit/secrets.toml
 __pycache__/
