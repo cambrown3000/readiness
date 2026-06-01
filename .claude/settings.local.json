@@ -15,7 +15,8 @@
       "Bash(xargs ls *)",
       "Bash(lsof -ti:8501)",
       "Bash(xargs kill *)",
-      "Bash(pkill -f \"streamlit run app.py\")"
+      "Bash(pkill -f \"streamlit run app.py\")",
+      "Bash(curl -s \"http://localhost:8501/?nutrition=1&date=2026-06-01&calories=1850&protein_g=142&carbs_g=180&fat_g=65&fiber_g=22&water_ml=2400&last_meal_time=19:30\")"
     ]
   }
 }

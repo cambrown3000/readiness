@@ -72,12 +72,46 @@ if "scheduler_started" not in st.session_state:
     st.session_state["scheduler_started"] = True
 
 
+_qp = st.query_params
+
+
+# ---------------------------------------------------------------------------
+# Nutrition intake via GET query params (called by Apple Shortcuts)
+# ---------------------------------------------------------------------------
+
+if "nutrition" in _qp:
+    _secret = os.getenv("WEBHOOK_SECRET", "")
+    if _secret and _qp.get("secret") != _secret:
+        st.error("Unauthorized — wrong or missing secret.")
+        st.stop()
+
+    _today = date.today().isoformat()
+    _date = _qp.get("date", _today)
+    _meal = _qp.get("last_meal_time")
+    if _meal and " " not in _meal:
+        _seconds = "" if _meal.count(":") >= 2 else ":00"
+        _meal = f"{_date} {_meal}{_seconds}"
+
+    _rec = {
+        "date":           _date,
+        "calories":       float(_qp["calories"])   if "calories"   in _qp else None,
+        "protein_g":      float(_qp["protein_g"])  if "protein_g"  in _qp else None,
+        "carbs_g":        float(_qp["carbs_g"])     if "carbs_g"    in _qp else None,
+        "fat_g":          float(_qp["fat_g"])       if "fat_g"      in _qp else None,
+        "fiber_g":        float(_qp["fiber_g"])     if "fiber_g"    in _qp else None,
+        "water_ml":       float(_qp["water_ml"])    if "water_ml"   in _qp else None,
+        "last_meal_time": _meal,
+    }
+    database.upsert_nutrition([_rec])
+    st.success(f"✓ Nutrition logged for {_rec['date']}")
+    st.stop()
+
+
 # ---------------------------------------------------------------------------
 # Auth — must run before any dashboard content
 # ---------------------------------------------------------------------------
 
 # Step 1: if Google just redirected back with ?code=..., exchange it for user info
-_qp = st.query_params
 if "code" in _qp and "user" not in st.session_state:
     with st.spinner("Signing in…"):
         _user = auth.exchange_code_for_user_info(_qp["code"], _qp.get("state"))
