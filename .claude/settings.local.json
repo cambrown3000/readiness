@@ -7,7 +7,11 @@
       "Bash(git add *)",
       "Bash(git commit *)",
       "Bash(grep -E \"requirements|\\\\.env|\\\\.py$\")",
-      "Bash(.venv/bin/python *)"
+      "Bash(.venv/bin/python *)",
+      "Bash(.venv/bin/streamlit run *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8501)",
+      "Bash(curl -s http://localhost:8501)",
+      "Bash(kill %1)"
     ]
   }
 }
