@@ -11,6 +11,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from datetime import date, datetime
 from dotenv import load_dotenv
+from apscheduler.schedulers.background import BackgroundScheduler
 
 import auth
 import database
@@ -18,6 +19,14 @@ import garmin_sync
 import insights
 
 load_dotenv()
+
+# Inject Streamlit Cloud secrets into os.environ so all os.getenv() calls work
+# in production without changing any other file. Locally, .env takes precedence.
+try:
+    for _k, _v in st.secrets.items():
+        os.environ.setdefault(_k, str(_v))
+except Exception:
+    pass
 
 # ---------------------------------------------------------------------------
 # Page config — must be the first Streamlit call
@@ -32,6 +41,35 @@ st.set_page_config(
 
 # Auto-refresh every 5 minutes (browser-level, no extra package needed)
 st.markdown('<meta http-equiv="refresh" content="300">', unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------------------
+# Background Garmin sync — 30-minute interval, started once per session
+# ---------------------------------------------------------------------------
+
+def _background_garmin_sync():
+    try:
+        client = garmin_sync.get_client()
+        database.upsert_activities(garmin_sync.fetch_activities(client, days=7))
+        database.upsert_sleep(garmin_sync.fetch_sleep(client, days=7))
+        database.upsert_hrv(garmin_sync.fetch_hrv(client, days=7))
+        database.upsert_daily_stats(garmin_sync.fetch_daily_stats(client, days=7))
+        print("[scheduler] Garmin sync complete")
+    except Exception as e:
+        print(f"[scheduler] Garmin sync failed: {e}")
+
+
+if "scheduler_started" not in st.session_state:
+    database.init_db()
+    _scheduler = BackgroundScheduler()
+    _scheduler.add_job(
+        _background_garmin_sync,
+        "interval",
+        minutes=30,
+        next_run_time=datetime.now(),  # run immediately on first start
+    )
+    _scheduler.start()
+    st.session_state["scheduler_started"] = True
 
 
 # ---------------------------------------------------------------------------
@@ -72,10 +110,6 @@ if "user" not in st.session_state:
 
 # Authenticated — pull user from session for the rest of the page
 _user = st.session_state["user"]
-
-
-# Ensure tables exist (safe no-op if already created)
-database.init_db()
 
 
 # ---------------------------------------------------------------------------
