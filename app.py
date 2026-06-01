@@ -3,6 +3,7 @@
 # nutrition data, and AI-generated insights. Pulls data from the SQLite database
 # via database.py and calls insights.py for Claude-powered pattern analysis.
 
+import html as html_lib
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -10,6 +11,7 @@ from datetime import date, datetime
 
 import database
 import garmin_sync
+import insights
 
 # ---------------------------------------------------------------------------
 # Page config — must be the first Streamlit call
@@ -361,33 +363,54 @@ st.divider()
 
 
 # ---------------------------------------------------------------------------
-# Section 5 — Insights placeholder
+# Section 5 — Insights
 # ---------------------------------------------------------------------------
 
 st.subheader("Insights")
 
-st.markdown(
-    """
-    <div style="
-        border: 2px dashed #374151;
-        border-radius: 10px;
-        padding: 2.5rem 2rem;
-        text-align: center;
-        color: #6b7280;
-        background: rgba(255,255,255,0.015);
-        margin-bottom: 1rem;
-    ">
-        <p style="font-size: 1.05rem; margin: 0 0 0.5rem 0; color: #9ca3af;">
-            Claude insights will appear here &mdash; coming in Phase 6
-        </p>
-        <p style="font-size: 0.85rem; margin: 0; color: #4b5563;">
-            Cross-variable pattern analysis: sleep vs. nutrition &nbsp;&middot;&nbsp;
-            HRV vs. training load &nbsp;&middot;&nbsp; recovery vs. stress
-        </p>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+# Load insights — fast path if cache is fresh, API call otherwise
+if insights.has_fresh_cache():
+    insights_text = insights.get_cached_insights(summary, activities_raw)
+else:
+    with st.spinner("Analyzing your data with Claude…"):
+        try:
+            insights_text = insights.get_cached_insights(summary, activities_raw)
+        except Exception as e:
+            insights_text = None
+            st.error(f"Could not generate insights: {e}")
+
+if insights_text:
+    safe = html_lib.escape(insights_text).replace("\n\n", "<br><br>").replace("\n", "<br>")
+    st.markdown(
+        f"""
+        <div style="
+            border: 2px dashed #374151;
+            border-radius: 10px;
+            padding: 2rem 2.25rem;
+            background: rgba(255,255,255,0.015);
+            color: #d1d5db;
+            line-height: 1.75;
+            font-size: 0.95rem;
+            margin-bottom: 0.75rem;
+        ">{safe}</div>
+        """,
+        unsafe_allow_html=True,
+    )
+    # Show cache date if available
+    try:
+        import json
+        cached = json.loads(insights.CACHE_PATH.read_text())
+        st.caption(f"Last analyzed: {cached.get('date', '—')}")
+    except Exception:
+        pass
+
+if st.button("Refresh insights"):
+    with st.spinner("Regenerating with Claude…"):
+        try:
+            insights.refresh_insights(summary, activities_raw)
+            st.rerun()
+        except Exception as e:
+            st.error(f"Refresh failed: {e}")
 
 
 # ---------------------------------------------------------------------------
