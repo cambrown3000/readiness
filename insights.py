@@ -112,8 +112,12 @@ def generate_today_briefing(summary: list[dict], activities: list[dict]) -> dict
     if TODAY_CACHE_PATH.exists():
         try:
             cached = json.loads(TODAY_CACHE_PATH.read_text())
-            if cached.get("date") == date.today().isoformat():
-                return cached["data"]
+            data = cached.get("data", {})
+            # Require new structure — old "briefing" format triggers regeneration
+            if (cached.get("date") == date.today().isoformat()
+                    and isinstance(data.get("insights"), list)
+                    and len(data["insights"]) > 0):
+                return data
         except Exception:
             pass
     return refresh_today_briefing(summary, activities)
@@ -121,28 +125,36 @@ def generate_today_briefing(summary: list[dict], activities: list[dict]) -> dict
 
 def refresh_today_briefing(summary: list[dict], activities: list[dict]) -> dict:
     data_block = _build_data_summary(summary[:7], activities[:10])
-    prompt = f"""You are a personal health coach. Analyze this health data and write a daily briefing.
+    prompt = f"""You are a personal health coach. Analyze this health data and return a structured JSON response.
 
 {data_block}
 
 Return a JSON object with exactly two keys:
-- "briefing": 150-200 words, second person, flowing prose (no bullet points, no markdown). Assess yesterday's recovery using sleep score, HRV, and resting HR. Give a clear training vs recovery recommendation for today based on the load pattern. If nutrition data exists, give one specific recommendation. End with one forward-looking sentence about what to watch today.
-- "suggested_questions": list of exactly 3 short follow-up questions relevant to today's data (under 12 words each).
+- "insights": array of exactly 4 objects, in this order: Recovery, Training, Nutrition, Watch today.
+  Each object has exactly three keys:
+  - "title": one of "Recovery", "Training", "Nutrition", "Watch today"
+  - "summary": one sentence under 20 words — the single most important finding for that category
+  - "detail": 2-3 sentences referencing specific numbers from the data with actionable guidance
+- "suggested_questions": array of exactly 3 strings, each under 12 words
 
-Return only valid JSON with no markdown code blocks."""
+Return ONLY valid JSON. No markdown. No code blocks. No explanation before or after."""
 
     client = _make_client()
     resp = client.messages.create(
         model=MODEL,
-        max_tokens=600,
+        max_tokens=800,
         messages=[{"role": "user", "content": prompt}],
     )
     try:
         data = _parse_json_response(resp.content[0].text)
-        if "briefing" not in data:
-            raise ValueError("missing briefing key")
+        if not isinstance(data.get("insights"), list) or len(data["insights"]) == 0:
+            raise ValueError("missing insights array")
     except Exception:
-        data = {"briefing": resp.content[0].text.strip(), "suggested_questions": []}
+        # Fallback: wrap raw text as a single insight card
+        data = {
+            "insights": [{"title": "Analysis", "summary": "See detail.", "detail": resp.content[0].text.strip()}],
+            "suggested_questions": [],
+        }
 
     TODAY_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
     TODAY_CACHE_PATH.write_text(json.dumps({"date": date.today().isoformat(), "data": data}))
