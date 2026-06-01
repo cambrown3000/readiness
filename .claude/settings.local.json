@@ -11,7 +11,11 @@
       "Bash(.venv/bin/streamlit run *)",
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8501)",
       "Bash(curl -s http://localhost:8501)",
-      "Bash(kill %1)"
+      "Bash(kill %1)",
+      "Bash(xargs ls *)",
+      "Bash(lsof -ti:8501)",
+      "Bash(xargs kill *)",
+      "Bash(pkill -f \"streamlit run app.py\")"
     ]
   }
 }

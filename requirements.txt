@@ -1,4 +1,6 @@
 streamlit
+google-auth-oauthlib
+google-api-python-client
 garminconnect
 flask
 anthropic

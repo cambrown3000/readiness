@@ -1,5 +1,7 @@
 .env
 data/*.db
+data/google_credentials.json
+data/insights_cache.json
 __pycache__/
 .DS_Store
 *.pyc

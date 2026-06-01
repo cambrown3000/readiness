@@ -4,14 +4,20 @@
 # via database.py and calls insights.py for Claude-powered pattern analysis.
 
 import html as html_lib
+import os
+
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 from datetime import date, datetime
+from dotenv import load_dotenv
 
+import auth
 import database
 import garmin_sync
 import insights
+
+load_dotenv()
 
 # ---------------------------------------------------------------------------
 # Page config — must be the first Streamlit call
@@ -26,6 +32,47 @@ st.set_page_config(
 
 # Auto-refresh every 5 minutes (browser-level, no extra package needed)
 st.markdown('<meta http-equiv="refresh" content="300">', unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------------------
+# Auth — must run before any dashboard content
+# ---------------------------------------------------------------------------
+
+# Step 1: if Google just redirected back with ?code=..., exchange it for user info
+_qp = st.query_params
+if "code" in _qp and "user" not in st.session_state:
+    with st.spinner("Signing in…"):
+        _user = auth.exchange_code_for_user_info(_qp["code"], _qp.get("state"))
+    st.query_params.clear()
+    if _user:
+        st.session_state["user"] = _user
+        st.rerun()
+    else:
+        st.error("Sign-in failed — please try again.")
+
+# Step 2: if no user in session yet, show the login page and stop
+if "user" not in st.session_state:
+    st.markdown(
+        """
+        <div style="
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            height: 55vh; gap: 0.5rem;
+        ">
+            <h1 style="font-size: 2.5rem; margin: 0;">Readiness</h1>
+            <p style="color: #6b7280; margin: 0 0 1.5rem 0; font-size: 1rem;">
+                Personal health dashboard
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.link_button("Sign in with Google", auth.get_authorization_url())
+    st.stop()
+
+# Authenticated — pull user from session for the rest of the page
+_user = st.session_state["user"]
+
 
 # Ensure tables exist (safe no-op if already created)
 database.init_db()
@@ -51,7 +98,8 @@ def load_activities(days: int) -> list[dict]:
 
 with st.sidebar:
     st.markdown("## Readiness")
-    st.caption("Personal health dashboard")
+    _first_name = (_user.get("name") or "").split()[0]
+    st.caption(f"{_first_name} · {_user.get('email', '')}")
     st.divider()
 
     days = st.selectbox(
@@ -79,6 +127,9 @@ with st.sidebar:
 
     st.divider()
     st.caption(f"Loaded {datetime.now().strftime('%-I:%M %p')}")
+    if st.button("Sign out", use_container_width=True):
+        del st.session_state["user"]
+        st.rerun()
 
 
 # ---------------------------------------------------------------------------
