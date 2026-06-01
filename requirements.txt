@@ -1,0 +1,9 @@
+streamlit
+garminconnect
+flask
+anthropic
+python-dotenv
+apscheduler
+requests
+pandas
+plotly
