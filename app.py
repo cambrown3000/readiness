@@ -1,5 +1,6 @@
 import os
 import re
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -20,6 +21,11 @@ try:
         os.environ.setdefault(_k, str(_v))
 except Exception:
     pass
+
+# TIMEZONE must also be set in Streamlit Community Cloud → App settings → Secrets
+def _local_now() -> datetime:
+    tz = ZoneInfo(os.getenv("TIMEZONE", "America/Denver"))
+    return datetime.now(tz)
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -515,7 +521,7 @@ def _finding_card_html(index: int, text: str) -> str:
 
 
 def _greeting() -> str:
-    hour = datetime.now().hour
+    hour = _local_now().hour
     if hour < 12:
         return "Good morning"
     elif hour < 17:
@@ -558,7 +564,7 @@ def _render_chips(questions: list, msg_key: str, prefix: str, summary, activitie
 def render_today():
     summary_7    = load_summary(7)
     activities_7 = load_activities(7)
-    today_str    = date.today().isoformat()
+    today_str    = _local_now().date().isoformat()
     today_row    = next((r for r in summary_7 if r["date"] == today_str),
                         summary_7[0] if summary_7 else {})
 
@@ -572,7 +578,7 @@ def render_today():
     )
     st.markdown(
         f'<p class="section-label" style="margin-top:0.15rem;">'
-        f'{date.today().strftime("%A, %B %-d, %Y")}</p>',
+        f'{_local_now().strftime("%A, %B %-d, %Y")}</p>',
         unsafe_allow_html=True,
     )
 
@@ -876,7 +882,7 @@ def render_history():
     with info_col:
         st.markdown(
             f'<p class="section-label" style="padding-top:0.55rem;">'
-            f'Updated {datetime.now().strftime("%-I:%M %p")}</p>',
+            f'Updated {_local_now().strftime("%-I:%M %p")}</p>',
             unsafe_allow_html=True,
         )
 
