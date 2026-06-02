@@ -10,3 +10,4 @@ apscheduler
 requests
 pandas
 plotly
+pillow

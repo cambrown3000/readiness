@@ -1,5 +1,7 @@
+import base64
 import os
 import re
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -8,6 +10,11 @@ import streamlit as st
 from apscheduler.schedulers.background import BackgroundScheduler
 from datetime import date, datetime
 from dotenv import load_dotenv
+
+try:
+    from PIL import Image as _PIL_Image
+except ImportError:
+    _PIL_Image = None
 
 import auth
 import database
@@ -27,13 +34,28 @@ def _local_now() -> datetime:
     tz = ZoneInfo(os.getenv("TIMEZONE", "America/Denver"))
     return datetime.now(tz)
 
+
+def _logo_b64() -> str:
+    try:
+        with open(Path(__file__).parent / "assets" / "logo.png", "rb") as f:
+            return base64.b64encode(f.read()).decode()
+    except Exception:
+        return ""
+
 # ---------------------------------------------------------------------------
 # Page config
 # ---------------------------------------------------------------------------
 
+_page_icon = "📊"
+if _PIL_Image is not None:
+    try:
+        _page_icon = _PIL_Image.open(Path(__file__).parent / "assets" / "logo.png")
+    except Exception:
+        pass
+
 st.set_page_config(
     page_title="Readiness",
-    page_icon="📊",
+    page_icon=_page_icon,
     layout="centered",
     initial_sidebar_state="collapsed",
     menu_items={"About": "Personal health dashboard combining Garmin + nutrition data."},
@@ -113,15 +135,23 @@ if "code" in _qp and "user" not in st.session_state:
         st.error("Sign-in failed — please try again.")
 
 if "user" not in st.session_state:
+    _logo = _logo_b64()
+    _logo_html = (
+        f'<img src="data:image/png;base64,{_logo}" '
+        f'style="width:80px;height:80px;object-fit:contain;margin-bottom:1rem;" '
+        f'alt="Readiness logo">'
+        if _logo else
+        '<div style="font-size:3rem;margin-bottom:0.75rem;line-height:1;">&#x1F4CA;</div>'
+    )
     st.markdown(
-        """
+        f"""
         <div style="
             display:flex;flex-direction:column;align-items:center;
             justify-content:center;min-height:70vh;gap:0;
             text-align:center;padding:4rem 1rem 2rem;
             font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sans-serif;
         ">
-            <div style="font-size:3rem;margin-bottom:0.75rem;line-height:1;">&#x1F4CA;</div>
+            {_logo_html}
             <h1 style="font-size:clamp(2rem,6vw,3rem);font-weight:700;
                 margin:0 0 0.5rem 0;letter-spacing:-0.5px;">Readiness</h1>
             <p style="color:#64748b;font-size:1.05rem;margin:0 0 1.5rem 0;font-weight:400;">
