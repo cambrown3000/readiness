@@ -179,10 +179,10 @@ footer { visibility: hidden !important; }
 
 /* === Section labels === */
 .section-label {
-    font-size: 0.65rem;
-    font-weight: 700;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: none;
     color: #475569;
     margin: 1.5rem 0 0.6rem 0;
 }
@@ -281,8 +281,11 @@ footer { visibility: hidden !important; }
 /* === Nav tab bar ===
    Targets ONLY the column block that has both a primary AND secondary button
    (the 3-tab nav row). Chip columns are all-secondary and are excluded. */
+[data-testid="stHorizontalBlock"]:has([data-testid="baseButton-primary"]):has([data-testid="baseButton-secondary"]) {
+    gap: 0 !important;
+}
 [data-testid="stHorizontalBlock"]:has([data-testid="baseButton-primary"]):has([data-testid="baseButton-secondary"]) [data-testid^="stColumn"] {
-    padding: 0 2px !important;
+    padding: 0 !important;
 }
 [data-testid="stHorizontalBlock"]:has([data-testid="baseButton-primary"]):has([data-testid="baseButton-secondary"]) button {
     background: transparent !important;
@@ -295,6 +298,7 @@ footer { visibility: hidden !important; }
     letter-spacing: 0.1em !important;
     text-transform: uppercase !important;
     padding: 8px 4px 10px !important;
+    width: 100% !important;
     box-shadow: none !important;
     transition: color 0.15s, border-color 0.15s !important;
 }
@@ -330,12 +334,22 @@ hr { border-color: #1a1a1a !important; }
     border: 1px solid #1f1f1f !important;
     border-radius: 12px !important;
     margin-bottom: 0.4rem !important;
+    padding-left: 0.75rem !important;
 }
+[data-testid="stChatMessageAvatarAssistant"] { display: none !important; }
+[data-testid="stChatMessageAvatarUser"] { display: none !important; }
+[data-testid="stChatMessageAvatar"] { display: none !important; }
 [data-testid="stChatInputContainer"] {
     background: #111111 !important;
     border: 1px solid #1f1f1f !important;
     border-radius: 12px !important;
 }
+
+/* === Hide Streamlit badge === */
+[data-testid="stDecoration"] { display: none !important; }
+.viewerBadge_container__1QSob { display: none !important; }
+#stDecoration { display: none !important; }
+a[href="https://streamlit.io"] { display: none !important; }
 
 /* === Dataframe === */
 [data-testid="stDataFrame"] {
@@ -585,20 +599,20 @@ def render_today():
         if v is None: return "neutral"
         return "good" if v >= 8000 else ("warn" if v < 4000 else "neutral")
 
-    pills = []
-    if fv("resting_hr"):
-        pills.append(_pill_html("HR", f"{int(fv('resting_hr'))} bpm", _hr_state(fv("resting_hr"))))
-    if fv("sleep_score"):
-        pills.append(_pill_html("Sleep", str(int(fv("sleep_score"))), _sleep_state(fv("sleep_score"))))
-    if fv("hrv_last_night"):
-        pills.append(_pill_html("HRV", f"{int(fv('hrv_last_night'))}ms", _hrv_state(fv("hrv_last_night"))))
-    if fv("body_battery_high"):
-        pills.append(_pill_html("Battery", str(int(fv("body_battery_high"))), _battery_state(fv("body_battery_high"))))
-    if fv("steps"):
-        pills.append(_pill_html("Steps", f"{int(fv('steps')):,}", _steps_state(fv("steps"))))
-    if pills:
-        st.markdown('<div class="pill-row">' + "".join(pills) + "</div>",
-                    unsafe_allow_html=True)
+    hr_val  = fv("resting_hr")
+    slp_val = fv("sleep_score")
+    hrv_val = fv("hrv_last_night")
+    bat_val = fv("body_battery_high")
+    stp_val = fv("steps")
+    pills = [
+        _pill_html("HR",      f"{int(hr_val)} bpm"  if hr_val  else "—", _hr_state(hr_val)),
+        _pill_html("Sleep",   str(int(slp_val))      if slp_val else "—", _sleep_state(slp_val)),
+        _pill_html("HRV",     f"{int(hrv_val)}ms"   if hrv_val else "—", _hrv_state(hrv_val)),
+        _pill_html("Battery", str(int(bat_val))      if bat_val else "—", _battery_state(bat_val)),
+        _pill_html("Steps",   f"{int(stp_val):,}"   if stp_val else "—", _steps_state(stp_val)),
+    ]
+    st.markdown('<div class="pill-row">' + "".join(pills) + "</div>",
+                unsafe_allow_html=True)
 
     if not summary_7:
         st.info("No health data yet — sync Garmin from the History tab to get started.")
@@ -753,6 +767,7 @@ def render_patterns():
             line_chart(dates, df["sleep_score"], "#818cf8",
                        "Sleep Score", y_range=[0, 100]),
             use_container_width=True,
+            config={"displayModeBar": False},
         )
 
         st.markdown('<p class="section-label">Training Load</p>', unsafe_allow_html=True)
@@ -774,7 +789,7 @@ def render_patterns():
                 title=dict(text="Activity Distance (km)", font=dict(size=12, color="#94a3b8")),
                 bargap=0.2,
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
         else:
             st.markdown('<p class="section-label" style="color:#374151;">No activities in this period.</p>',
                         unsafe_allow_html=True)
@@ -800,7 +815,7 @@ def render_patterns():
             **_CHART,
             title=dict(text="Resting HR & HRV", font=dict(size=12, color="#94a3b8")),
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
         if df["nutrition_calories"].notna().any():
             st.markdown('<p class="section-label">Nutrition</p>', unsafe_allow_html=True)
@@ -820,7 +835,7 @@ def render_patterns():
                 **_CHART,
                 title=dict(text="Calories & Protein", font=dict(size=12, color="#94a3b8")),
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
     # Follow-up chips + chat
     questions = analysis_data.get("suggested_questions", [])
@@ -904,7 +919,7 @@ def render_history():
         ].copy()
         df.columns = ["Date", "RHR", "Sleep", "Stress", "Steps",
                       "Active kcal", "HRV", "Battery"]
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df.fillna("—"), use_container_width=True, hide_index=True)
     else:
         st.markdown('<p style="color:#374151;font-size:0.85rem;">No stats found.</p>',
                     unsafe_allow_html=True)
@@ -922,7 +937,7 @@ def render_history():
                 lambda x: round(x / 3600, 1) if pd.notna(x) and x else None
             )
         df.columns = ["Date", "Score", "Total h", "Deep h", "REM h", "Awake h"]
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df.fillna("—"), use_container_width=True, hide_index=True)
     else:
         st.markdown('<p style="color:#374151;font-size:0.85rem;">No sleep data found.</p>',
                     unsafe_allow_html=True)
@@ -937,7 +952,7 @@ def render_history():
         ].copy()
         df.columns = ["Date", "Calories", "Protein g", "Carbs g",
                       "Fat g", "Fiber g", "Water ml"]
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df.fillna("—"), use_container_width=True, hide_index=True)
     else:
         st.markdown('<p style="color:#374151;font-size:0.85rem;">No nutrition data logged yet.</p>',
                     unsafe_allow_html=True)
